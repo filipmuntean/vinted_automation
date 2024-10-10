@@ -9,7 +9,104 @@ import base64
 from bs4 import BeautifulSoup
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/gmail.readonly']
+
+SPREADSHEET_ID = '1oBMj-n4iRuDqGmbKpBeB3P_qL4ucAIhr-phU40gsRRA'
+
+SHEET_RANGE = 'Sheet1!C:D'
+
+def authenticate_sheets_api():
+    """Authenticate and return the Google Sheets API service."""
+    creds = None
+    # The token.json stores the user's access and refresh tokens.
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for future runs
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+
+    # Build the Sheets API service
+    service = build('sheets', 'v4', credentials=creds)
+    return service
+
+def append_to_google_sheets(item, price):
+    """Insert a new row with item, price, and formula at the top of the Google Sheets."""
+    service = authenticate_sheets_api()
+
+    # Retrieve current data to know where to insert the new row
+    sheet = service.spreadsheets()
+
+    # Insert a blank row at the top (shift everything down)
+    request_body = {
+        'requests': [{
+            'insertRange': {
+                'range': {
+                    'sheetId': 0,  # Assuming first sheet (sheetId=0), adjust if needed
+                    'startRowIndex': 0,  # Start at the top
+                    'endRowIndex': 1  # Insert only one row
+                },
+                'shiftDimension': 'ROWS'
+            }
+        }]
+    }
+
+    # Send the request to insert the row
+    sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=request_body).execute()
+
+    # Prepare the data to insert in the first row
+    formula = f"=D1 - B1/ 5"
+    values = [[None, None, item, price, formula]]  # None for A, B columns, item in C, price in D, formula in E
+    body = {
+        'values': values
+    }
+
+    # Append item, price, and formula in the first row (C1:D1:E1)
+    result = sheet.values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range="Sheet1!A1:E1",  # Insert at the top row (first row)
+        valueInputOption='USER_ENTERED',  # Ensure formula is entered correctly
+        body=body
+    ).execute()
+
+    print(f'{result.get("updatedCells")} cells updated.')
+
+# def append_to_google_sheets(item, price):
+#     """Append a new row with item, price, and formula to the Google Sheets."""
+#     service = authenticate_sheets_api()
+
+#     # Retrieve current data to know where to append new rows
+#     sheet = service.spreadsheets()
+
+#     # Get the existing rows in the sheet to calculate the next available row
+#     result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range="Sheet1!A:E").execute()
+#     existing_rows = result.get('values', [])
+#     next_row = len(existing_rows) + 1  # Calculate the next available row
+
+#     # Create the formula for column E
+#     formula = f"=D{next_row} - B{next_row}/ 5"
+
+#     # Prepare the data to append, item in column C, price in column D, and formula in column E
+#     values = [[None, None, item, price, formula]]  # None for A, B columns, item in C, price in D, formula in E
+#     body = {
+#         'values': values
+#     }
+
+#     # Append item, price, and formula to Google Sheets
+#     result = sheet.values().append(
+#         spreadsheetId=SPREADSHEET_ID,
+#         range=f"Sheet1!A{next_row}:E{next_row}",
+#         valueInputOption='USER_ENTERED',  # This ensures the formula is entered correctly
+#         body=body
+#     ).execute()
+
+#     print(f'{result.get("updates").get("updatedCells")} cells appended.')
+
 
 def get_message_subject(msg):
     """Extracts the subject (title) of the email from the headers."""
@@ -107,10 +204,12 @@ def main():
 
       if subject == "This order is completed":
         item, price = extract_item_and_price(body)
-            
-        print(f"Item: {item}\nPrice: {price}\n{'-'*50}\n")
-        # print(f"{body}\n\n\n")
 
+        if price.startswith('\''):
+          price = price[1:]
+        append_to_google_sheets(item, float(price[:-2]))
+        print(f"Added to Google Sheets: {item} - {price}")
+        
   except HttpError as error:
     # TODO(developer) - Handle errors from gmail API.
     print(f"An error occurred: {error}")
