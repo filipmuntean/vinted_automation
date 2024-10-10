@@ -84,7 +84,6 @@ def append_to_google_sheets(item, price):
         # Reset current_row_count for the new sheet
         current_row_count = 0  # Reset for the new sheet context
         
-
     # Insert a blank row at the top of the sheet or new sheet
     request_body = {
         'requests': [{
