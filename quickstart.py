@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import base64
 from bs4 import BeautifulSoup
+from datetime import datetime
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/gmail.readonly']
@@ -39,15 +40,57 @@ def append_to_google_sheets(item, price):
     """Insert a new row with item, price, and formula at the top of the Google Sheets."""
     service = authenticate_sheets_api()
 
-    # Retrieve current data to know where to insert the new row
+    # Retrieve current data to check the number of rows
     sheet = service.spreadsheets()
+    result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range="Sheet1!A:E").execute()
+    existing_rows = result.get('values', [])
+    current_row_count = len(existing_rows)
 
-    # Insert a blank row at the top (shift everything down)
+    # If the sheet has reached 50 rows, calculate totals and move to a new sheet
+    if current_row_count >= 50:
+        # Compute the total for column D and column E
+        total_column_d = f"=SUM(D1:D{current_row_count})"
+        total_column_e = f"=SUM(E1:E{current_row_count})"
+
+        # Append the totals to the next available row
+        total_row = [[None, None, "Total", total_column_d, total_column_e]]
+        sheet.values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"Sheet1!A{current_row_count + 1}:E{current_row_count + 1}",
+            valueInputOption='USER_ENTERED',
+            body={'values': total_row}
+        ).execute()
+
+        # Create a new sheet
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        new_sheet_title = f"Sheet_{current_date}"  # Generate a new sheet name
+        create_sheet_body = {
+            'requests': [{
+                'addSheet': {
+                    'properties': {
+                        'title': new_sheet_title,
+                        'gridProperties': {'rowCount': 100, 'columnCount': 10}
+                    }
+                }
+            }]
+        }
+
+        # Execute the creation of a new sheet
+        sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=create_sheet_body).execute()
+
+        # Switch to the new sheet and continue appending
+        print(f"New sheet '{new_sheet_title}' created.")
+
+        # Reset current_row_count for the new sheet
+        current_row_count = 0  # Reset for the new sheet context
+        
+
+    # Insert a blank row at the top of the sheet or new sheet
     request_body = {
         'requests': [{
             'insertRange': {
                 'range': {
-                    'sheetId': 0,  # Assuming first sheet (sheetId=0), adjust if needed
+                    'sheetId': 0,  # Assuming first sheet or new sheet (adjust if needed)
                     'startRowIndex': 0,  # Start at the top
                     'endRowIndex': 1  # Insert only one row
                 },
@@ -60,8 +103,8 @@ def append_to_google_sheets(item, price):
     sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=request_body).execute()
 
     # Prepare the data to insert in the first row
-    formula = f"=D1 - B1/ 5"
-    values = [[None, None, item, price, formula]]  # None for A, B columns, item in C, price in D, formula in E
+    formula = f"=D1 - B1 / 5"
+    values = [[None, None, item, price, formula]]  
     body = {
         'values': values
     }
