@@ -1,0 +1,94 @@
+def append_to_google_sheets(item, price):
+    """Insert a new row with item, price, and formula at the top of the Google Sheets."""
+    service = authenticate_sheets_api()
+
+    # Retrieve current data to check the number of rows
+    sheet = service.spreadsheets()
+    result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range="Sheet1!A:E").execute()
+    existing_rows = result.get('values', [])
+    current_row_count = len(existing_rows)
+
+    # If the sheet has reached 50 rows, calculate totals and move to a new sheet
+    if current_row_count >= 50:
+        if not check_if_total_exists(service, SPREADSHEET_ID, "Sheet1", current_row_count):
+        # Compute totals only after reaching 50 rows
+            total_column_d = f"=SUM(D1:D{current_row_count})"
+            total_column_e = f"=SUM(E1:E{current_row_count})"
+
+            # Append the totals to the next available row in the current sheet
+            total_row = [[None, None, "Total", total_column_d, total_column_e]]
+            
+            sheet.values().append(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"Sheet1!A{current_row_count + 1}:E{current_row_count + 1}",
+                valueInputOption='USER_ENTERED',
+                body={'values': total_row}
+            ).execute()
+
+            print("Total row appended. Now creating a new sheet.")
+        else:
+           print("Alreayd have the total row")
+
+        # Generate a new sheet name using the current date
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        new_sheet_title = f"Sheet_{current_date}"
+
+        # Check if the new sheet already exists
+        new_sheet_id = get_sheet_by_title(service, SPREADSHEET_ID, new_sheet_title)
+
+        if new_sheet_id is None:
+            # Create the new sheet if it doesn't exist
+            create_sheet_body = {
+                'requests': [{
+                    'addSheet': {
+                        'properties': {
+                            'title': new_sheet_title,
+                            'gridProperties': {'rowCount': 100, 'columnCount': 10}
+                        }
+                    }
+                }]
+            }
+
+            # Execute the creation of a new sheet
+            response = sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=create_sheet_body).execute()
+            new_sheet_id = response['replies'][0]['addSheet']['properties']['sheetId']
+            print(f"New sheet '{new_sheet_title}' created.")
+        else:
+            print(f"Sheet '{new_sheet_title}' already exists. Moving to it.")
+
+        # Now, switch to the new sheet and append the new data there
+        next_row = get_next_empty_row(service, SPREADSHEET_ID, new_sheet_title)  # Get next available row
+        formula = f"=D{next_row} - B{next_row} / 5"
+        values = [[None, None, item, price, formula]]  # None for A, B columns, item in C, price in D, formula in E
+        body = {
+            'values': values
+        }
+
+        # Insert item, price, and formula in the next available row of the new sheet
+        result = sheet.values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{new_sheet_title}!A{next_row}:E{next_row}",
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
+
+        print(f'New data added to the new sheet at row {next_row}.')
+
+    else:
+        # If we're still under the 50-row limit, append to the existing sheet
+        next_row = get_next_empty_row(service, SPREADSHEET_ID, "Sheet1")  # Get next available row in the current sheet
+        formula = f"=D{next_row} - B{next_row} / 5"
+        values = [[None, None, item, price, formula]]
+        body = {
+            'values': values
+        }
+
+        # Append the new data in the next available row in the current sheet
+        result = sheet.values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"Sheet1!A{next_row}:E{next_row}",
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
+
+        print(f'New data added to Sheet1 at row {next_row}.')
